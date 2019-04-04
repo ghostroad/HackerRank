@@ -4,17 +4,67 @@ import scala.io.Source
 
 class Cell(val row: Int,
            val col: Int,
-           val weight: Int,
-           var adjacentCells: Array[Cell] = Array(),
+           weight: Int) extends Node(weight)
+
+case class Edge(weight: Int, dest: Node)
+
+class Node(val weight: Int,
+           var edges: Array[Edge] = Array(),
            var distance: Int = Int.MaxValue,
            var visited: Boolean = false,
            var queued: Boolean = false)
 
-object Cell {
-  implicit val orderByDistance: Ordering[Cell] = Ordering.by[Cell, Int](_.distance).reverse
+object Node {
+  implicit val orderByDistance: Ordering[Node] = Ordering.by[Node, Int](_.distance).reverse
 }
 
-case class GridSequence(subgrids: Array[WeightedGrid])
+case class GridSequence(subgrids: Array[WeightedGrid]) {
+  def solution(source: (Int, Int), dest: (Int, Int)): Int = ???
+}
+
+object GridSequence {
+
+  val subgridWidth = 100
+
+  def fromWeights(weights: Array[Array[Int]]): GridSequence = {
+    val cols = weights.head.length
+
+    GridSequence((0 until cols by subgridWidth - 1).toArray.map { start =>
+      WeightedGrid.fromWeights(weights.map(_.slice(start, start + subgridWidth)))
+    })
+  }
+}
+
+object Dijkstra {
+  def shortestPath(source: Node, target: Node): Int = {
+    source.distance = 0
+    val queue = mutable.PriorityQueue[Node](source)
+    queue.enqueue()
+
+    while (queue.nonEmpty) {
+      val curr = queue.dequeue()
+
+      for (edge <- curr.edges if !edge.dest.visited) {
+        val newDistance = edge.weight + curr.distance
+        if (newDistance < edge.dest.distance) {
+          edge.dest.distance = newDistance
+          if (edge.dest == target) {
+            return newDistance
+          }
+        }
+
+        if (!edge.dest.queued) {
+          queue.enqueue(edge.dest)
+          edge.dest.queued = true
+        }
+      }
+
+      curr.visited = true
+    }
+
+    throw new IllegalStateException("Shouldn't have gotten here.")
+  }
+}
 
 class WeightedGrid(val cells: Array[Array[Cell]]) {
 
@@ -25,15 +75,15 @@ class WeightedGrid(val cells: Array[Array[Cell]]) {
     i <- 0 until rows
     j <- 0 until cols
   } {
-    cells(i)(j).adjacentCells = adjacentCells(i, j)
+    cells(i)(j).edges = adjacentCells(i, j)
   }
 
   private def getCell(cell: (Int, Int)): Cell = cells(cell._1)(cell._2)
 
-  private def adjacentCells(row: Int, col: Int ): Array[Cell] = {
+  private def adjacentCells(row: Int, col: Int ): Array[Edge] = {
     Array[(Int, Int)]((row + 1, col), (row - 1, col), (row, col + 1), (row, col - 1)).filter {
       case (adjRow, adjCol) => adjRow >= 0 && adjCol >= 0 && adjRow < rows && adjCol < cols
-    }.map { case (i, j) => cells(i)(j) }
+    }.map { case (i, j) => Edge(cells(i)(j).weight, cells(i)(j)) }
   }
 
   private def clearState(): Unit = {
@@ -50,36 +100,12 @@ class WeightedGrid(val cells: Array[Array[Cell]]) {
 
   def solution(source: (Int, Int), dest: (Int, Int)): Int = {
     val sourceCell = getCell(source)
+    val destCell = getCell(dest)
     if (source == dest) return sourceCell.weight
 
     clearState()
 
-    sourceCell.distance = sourceCell.weight
-    val queue = mutable.PriorityQueue[Cell](sourceCell)
-    queue.enqueue()
-
-    while (queue.nonEmpty) {
-      val curr = queue.dequeue()
-
-      for (adj <- curr.adjacentCells if !adj.visited) {
-        val newDistance = adj.weight + curr.distance
-        if (newDistance < adj.distance) {
-          adj.distance = newDistance
-          if ((adj.row, adj.col) == dest) {
-            return newDistance
-          }
-        }
-
-        if (!adj.queued) {
-          queue.enqueue(adj)
-          adj.queued = true
-        }
-      }
-
-      curr.visited = true
-    }
-
-    throw new IllegalStateException("Shouldn't have gotten here.")
+    sourceCell.weight + Dijkstra.shortestPath(sourceCell, destCell)
   }
 }
 
