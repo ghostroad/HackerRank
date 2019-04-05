@@ -1,45 +1,138 @@
 
+import GridWithWalls.SECTION_WIDTH
+
 import scala.collection.mutable
 import scala.io.Source
 
+
 class GridCell(val row: Int,
                val col: Int,
-               weight: Int) extends Node(weight)
+               val weight: Int) extends Node
+
+class MetaNode(val cell: GridCell) extends Node
 
 case class Edge(weight: Int, dest: Node)
 
-class Node(val weight: Int,
-           var edges: Array[Edge] = Array(),
+class Node(var edges: Array[Edge] = Array(),
            var distance: Int = Int.MaxValue,
            var visited: Boolean = false,
-           var queued: Boolean = false)
+           var queued: Boolean = false) {
+
+  def clear(): Unit = {
+    distance = Int.MaxValue
+    visited = false
+    queued = false
+  }
+}
 
 object Node {
   implicit val orderByDistance: Ordering[Node] = Ordering.by[Node, Int](_.distance).reverse
 }
 
-case class GridSequence(subgrids: Array[WeightedGrid]) {
-  def solution(source: (Int, Int), dest: (Int, Int)): Int = ???
+case class GridWithWalls(grid: WeightedGrid, boundaryLocations: Array[Int], boundaries: Array[Array[MetaNode]]) extends Solver {
+
+  def solution(source: (Int, Int), dest: (Int, Int)): Int = {
+    if (source._2 / SECTION_WIDTH == dest._2 / SECTION_WIDTH) {
+      return grid.solution(source, dest)
+    }
+
+    clearMetaGraph()
+
+    val sourceNode = createSourceNode(source)
+    val (destinationNode, destinationNeighbors) = createDestinationNode(dest)
+    Dijkstra.storeShortestPaths(sourceNode, Array(destinationNode))
+
+    destinationNeighbors.foreach { neighbor =>
+      neighbor.edges = neighbor.edges.dropRight(1)
+    }
+
+    sourceNode.cell.weight + destinationNode.distance
+  }
+
+  private def createSourceNode(source: (Int, Int)) = {
+    val i = source._2 / SECTION_WIDTH
+    val sourceNode = new MetaNode(grid.cells(source._1)(source._2))
+
+    grid.clearState()
+    val left = if (i > 0) boundaries(i - 1) else Array[MetaNode]()
+    val right = if (i < boundaries.length) boundaries(i) else Array[MetaNode]()
+    val neighbors = left ++ right
+    Dijkstra.storeShortestPaths(sourceNode.cell, neighbors.map(_.cell))
+
+    sourceNode.edges = neighbors.map(neighbor => Edge(neighbor.cell.distance, neighbor))
+    sourceNode
+  }
+
+  private def createDestinationNode(dest: (Int, Int)): (MetaNode, Array[MetaNode]) = {
+    val i = dest._2 / SECTION_WIDTH
+    val destCell = grid.cells(dest._1)(dest._2)
+    val destMetaNode = new MetaNode(destCell)
+
+    grid.clearState()
+    val left = if (i > 0) boundaries(i - 1) else Array[MetaNode]()
+    val right = if (i < boundaries.length) boundaries(i) else Array[MetaNode]()
+    val neighbors = left ++ right
+    Dijkstra.storeShortestPaths(destCell, neighbors.map(_.cell))
+
+    neighbors.foreach { neighbor =>
+      neighbor.edges = neighbor.edges :+ Edge(neighbor.cell.distance - neighbor.cell.weight + destCell.weight, destMetaNode)
+    }
+
+    (destMetaNode, neighbors)
+  }
+
+  def clearMetaGraph(): Unit = {
+    boundaries.foreach(_.foreach(_.clear()))
+  }
+
+  override def clearingTime: Long = grid.clearingTime
 }
 
-object GridSequence {
+object GridWithWalls {
+  val SECTION_WIDTH = 50
 
-  val subgridWidth = 100
 
-  def fromWeights(weights: Array[Array[Int]]): GridSequence = {
-    val cols = weights.head.length
+  def fromWeights(weights: Array[Array[Int]]): GridWithWalls = {
+    val t0 = System.nanoTime()
+    val grid = WeightedGrid.fromWeights(weights)
 
-    GridSequence((0 until cols by subgridWidth - 1).toArray.map { start =>
-      WeightedGrid.fromWeights(weights.map(_.slice(start, start + subgridWidth)))
-    })
+    val boundaryLocations = (SECTION_WIDTH - 1 until grid.cols by SECTION_WIDTH).toArray
+
+    assert(boundaryLocations.length > 1)
+
+    val boundaries: Array[Array[MetaNode]] = boundaryLocations.map { col =>
+      (0 until grid.rows).toArray.map { row =>
+        new MetaNode(grid.cells(row)(col))
+      }
+    }
+
+    boundaries.indices.foreach { i =>
+      val boundary = boundaries(i)
+      boundary.foreach { node =>
+        grid.clearState()
+        val siblings = boundary.filter(_ != node)
+        val left = if (i > 0) boundaries(i - 1) else Array[MetaNode]()
+        val right = if (i < boundaries.length - 1) boundaries(i + 1) else Array[MetaNode]()
+        val neighbors = siblings ++ left ++ right
+        Dijkstra.storeShortestPaths(node.cell, neighbors.map(_.cell))
+
+        node.edges = neighbors.map(neighbor => Edge(neighbor.cell.distance, neighbor))
+      }
+    }
+
+    val t1 = System.nanoTime()
+    println(s"Initialized meta grid in ${(t1 - t0)/1000000000.0} s.")
+    GridWithWalls(grid, boundaryLocations, boundaries)
   }
 }
 
 object Dijkstra {
-  def computeShortestPaths(source: Node, targets: Array[Node]): Unit = {
+  def storeShortestPaths(source: Node, targets: Array[Node]): Unit = {
     val targetSet = mutable.Set(targets:_*)
 
     source.distance = 0
+    targetSet.remove(source)
+
     val queue = mutable.PriorityQueue[Node](source)
     queue.enqueue()
 
@@ -50,7 +143,6 @@ object Dijkstra {
         val newDistance = edge.weight + curr.distance
         if (newDistance < edge.dest.distance) {
           edge.dest.distance = newDistance
-          targetSet.remove(edge.dest)
         }
 
         if (!edge.dest.queued) {
@@ -60,14 +152,22 @@ object Dijkstra {
       }
 
       curr.visited = true
+      targetSet.remove(curr)
     }
   }
 }
 
-class WeightedGrid(val cells: Array[Array[GridCell]]) {
+trait Solver {
+  def solution(source: (Int, Int), dest: (Int, Int)): Int
+
+  def clearingTime: Long
+}
+
+class WeightedGrid(val cells: Array[Array[GridCell]]) extends Solver {
 
   val rows: Int = cells.length
   val cols: Int = cells.head.length
+  var clearingTime: Long = 0
 
   for {
     i <- 0 until rows
@@ -82,25 +182,18 @@ class WeightedGrid(val cells: Array[Array[GridCell]]) {
     }.map { case (i, j) => Edge(cells(i)(j).weight, cells(i)(j)) }
   }
 
-  private def clearState(): Unit = {
-    for {
-      i <- 0 until rows
-      j <- 0 until cols
-    } {
-      val cell = getCell((i, j))
-      cell.distance = Int.MaxValue
-      cell.visited = false
-      cell.queued = false
-    }
+  def clearState(): Unit = {
+    val t0 = System.nanoTime()
+    cells.foreach(_.foreach(_.clear()))
+    clearingTime += System.nanoTime() - t0
   }
 
   def solution(source: (Int, Int), dest: (Int, Int)): Int = {
     val sourceCell = getCell(source)
     val destCell = getCell(dest)
-    if (source == dest) return sourceCell.weight
 
     clearState()
-    Dijkstra.computeShortestPaths(sourceCell, Array(destCell))
+    Dijkstra.storeShortestPaths(sourceCell, Array(destCell))
 
     sourceCell.weight + destCell.distance
   }
@@ -122,31 +215,47 @@ object WeightedGrid {
 object ShortestPath extends App {
 
   def check(inputFileName: String, expectedFileName: String): Unit = {
+    val t0 = System.nanoTime()
+    println(s"Checking $inputFileName")
+
     val inputFile = Source.fromResource(inputFileName)
     val expectedFile = Source.fromResource(expectedFileName)
 
     val inputLines = inputFile.getLines()
     val expectedLines = expectedFile.getLines()
 
-    val weightsRows: Int = inputLines.next().split(" ")(0).toInt
+    val dimensions = inputLines.next().split(" ")
+    val weightsRows: Int = dimensions(0).toInt
+    val weightsCols: Int = dimensions(1).toInt
+
     val weights: Array[Array[Int]] = (1 to weightsRows).toArray.map(_ => inputLines.next().split(" ").map(_.toInt))
 
     val numQueries = inputLines.next().toInt
 
-    val shortestPath = WeightedGrid.fromWeights(weights)
+    val solver: Solver =
+      if (weightsCols <= 2 * SECTION_WIDTH) {
+        WeightedGrid.fromWeights(weights)
+      } else {
+        GridWithWalls.fromWeights(weights)
+      }
 
     (1 to numQueries).foreach { i =>
       if (i % 500 == 0) println(i)
       val query = inputLines.next().split(" ").map(_.toInt)
       val expectedOutput = expectedLines.next().toInt
-      val actualSolution = shortestPath.solution((query(0), query(1)), (query(2), query(3)))
+      val actualSolution = solver.solution((query(0), query(1)), (query(2), query(3)))
       if (actualSolution != expectedOutput) {
-        println(s"Oops: $i $query $actualSolution $expectedOutput")
+        println(s"Oops: $i ${query.mkString(",")} $actualSolution $expectedOutput")
       }
     }
 
     inputFile.close()
     expectedFile.close()
+
+    val t1 = System.nanoTime()
+
+    println(s"${(t1 - t0)/1000000000.0} s elapsed.")
+    println(s"Spent ${solver.clearingTime/1000000000.0} s clearing grid.")
   }
 
   check("input00.txt", "output00.txt")
