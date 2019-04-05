@@ -1,5 +1,5 @@
 
-import GridWithWalls.SECTION_WIDTH
+import SectionedGrid.SECTION_WIDTH
 
 import scala.collection.mutable
 import scala.io.Source
@@ -29,7 +29,7 @@ object Node {
   implicit val orderByDistance: Ordering[Node] = Ordering.by[Node, Int](_.distance).reverse
 }
 
-case class GridWithWalls(grid: WeightedGrid, boundaryLocations: Array[Int], boundaries: Array[Array[MetaNode]]) extends Solver {
+case class SectionedGrid(grid: WeightedGrid, boundaryLocations: Array[Int], boundaries: Array[Array[MetaNode]]) extends Solver {
 
   def solution(source: (Int, Int), dest: (Int, Int)): Int = {
     if (source._2 / SECTION_WIDTH == dest._2 / SECTION_WIDTH) {
@@ -88,12 +88,14 @@ case class GridWithWalls(grid: WeightedGrid, boundaryLocations: Array[Int], boun
   override def clearingTime: Long = grid.clearingTime
 }
 
-object GridWithWalls {
-  val SECTION_WIDTH = 50
+object SectionedGrid {
+  val SECTION_WIDTH = 100
 
-
-  def fromWeights(weights: Array[Array[Int]]): GridWithWalls = {
+  def fromWeights(weights: Array[Array[Int]]): SectionedGrid = {
     val t0 = System.nanoTime()
+    val cols = weights.head.length
+    val grids = (0 until cols by SECTION_WIDTH).map(i => WeightedGrid.fromWeights(weights.map(_.slice(i, i + SECTION_WIDTH))))
+
     val grid = WeightedGrid.fromWeights(weights)
 
     val boundaryLocations = (SECTION_WIDTH - 1 until grid.cols by SECTION_WIDTH).toArray
@@ -122,7 +124,7 @@ object GridWithWalls {
 
     val t1 = System.nanoTime()
     println(s"Initialized meta grid in ${(t1 - t0)/1000000000.0} s.")
-    GridWithWalls(grid, boundaryLocations, boundaries)
+    SectionedGrid(grid, boundaryLocations, boundaries)
   }
 }
 
@@ -236,7 +238,7 @@ object ShortestPath extends App {
       if (weightsCols <= 2 * SECTION_WIDTH) {
         WeightedGrid.fromWeights(weights)
       } else {
-        GridWithWalls.fromWeights(weights)
+        SectionedGrid.fromWeights(weights)
       }
 
     (1 to numQueries).foreach { i =>
