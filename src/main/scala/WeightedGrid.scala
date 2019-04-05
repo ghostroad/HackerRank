@@ -2,9 +2,9 @@
 import scala.collection.mutable
 import scala.io.Source
 
-class Cell(val row: Int,
-           val col: Int,
-           weight: Int) extends Node(weight)
+class GridCell(val row: Int,
+               val col: Int,
+               weight: Int) extends Node(weight)
 
 case class Edge(weight: Int, dest: Node)
 
@@ -36,21 +36,21 @@ object GridSequence {
 }
 
 object Dijkstra {
-  def shortestPath(source: Node, target: Node): Int = {
+  def computeShortestPaths(source: Node, targets: Array[Node]): Unit = {
+    val targetSet = mutable.Set(targets:_*)
+
     source.distance = 0
     val queue = mutable.PriorityQueue[Node](source)
     queue.enqueue()
 
-    while (queue.nonEmpty) {
+    while (queue.nonEmpty && targetSet.nonEmpty) {
       val curr = queue.dequeue()
 
       for (edge <- curr.edges if !edge.dest.visited) {
         val newDistance = edge.weight + curr.distance
         if (newDistance < edge.dest.distance) {
           edge.dest.distance = newDistance
-          if (edge.dest == target) {
-            return newDistance
-          }
+          targetSet.remove(edge.dest)
         }
 
         if (!edge.dest.queued) {
@@ -61,12 +61,10 @@ object Dijkstra {
 
       curr.visited = true
     }
-
-    throw new IllegalStateException("Shouldn't have gotten here.")
   }
 }
 
-class WeightedGrid(val cells: Array[Array[Cell]]) {
+class WeightedGrid(val cells: Array[Array[GridCell]]) {
 
   val rows: Int = cells.length
   val cols: Int = cells.head.length
@@ -74,13 +72,11 @@ class WeightedGrid(val cells: Array[Array[Cell]]) {
   for {
     i <- 0 until rows
     j <- 0 until cols
-  } {
-    cells(i)(j).edges = adjacentCells(i, j)
-  }
+  } cells(i)(j).edges = edges(i, j)
 
-  private def getCell(cell: (Int, Int)): Cell = cells(cell._1)(cell._2)
+  private def getCell(cell: (Int, Int)): GridCell = cells(cell._1)(cell._2)
 
-  private def adjacentCells(row: Int, col: Int ): Array[Edge] = {
+  private def edges(row: Int, col: Int ): Array[Edge] = {
     Array[(Int, Int)]((row + 1, col), (row - 1, col), (row, col + 1), (row, col - 1)).filter {
       case (adjRow, adjCol) => adjRow >= 0 && adjCol >= 0 && adjRow < rows && adjCol < cols
     }.map { case (i, j) => Edge(cells(i)(j).weight, cells(i)(j)) }
@@ -104,8 +100,9 @@ class WeightedGrid(val cells: Array[Array[Cell]]) {
     if (source == dest) return sourceCell.weight
 
     clearState()
+    Dijkstra.computeShortestPaths(sourceCell, Array(destCell))
 
-    sourceCell.weight + Dijkstra.shortestPath(sourceCell, destCell)
+    sourceCell.weight + destCell.distance
   }
 }
 
@@ -113,9 +110,9 @@ object WeightedGrid {
   def fromWeights(weights: Array[Array[Int]]): WeightedGrid = {
     val rows = weights.length
     val cols = weights.head.length
-    val cellGrid: Array[Array[Cell]] = (0 until rows).toArray.map { i =>
+    val cellGrid: Array[Array[GridCell]] = (0 until rows).toArray.map { i =>
       (0 until cols).toArray.map { j =>
-        new Cell(row = i, col = j, weight = weights(i)(j))
+        new GridCell(row = i, col = j, weight = weights(i)(j))
       }
     }
     new WeightedGrid(cellGrid)
