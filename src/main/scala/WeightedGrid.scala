@@ -7,13 +7,13 @@ import scala.io.Source
 
 class GridCell(val row: Int,
                val col: Int,
-               val weight: Int) extends Node
+               val weight: Int) extends Node[GridCell]
 
-class MetaNode(val cell: GridCell) extends Node
+class MetaNode(val cell: GridCell) extends Node[MetaNode]
 
-case class Edge(weight: Int, dest: Node)
+case class Edge[T <: Node[T]](weight: Int, dest: T)
 
-class Node(var edges: Array[Edge] = Array(),
+class Node[T](var edges: Array[Edge[T]] = Array(),
            var distance: Int = Int.MaxValue,
            var visited: Boolean = false,
            var queued: Boolean = false) {
@@ -26,7 +26,7 @@ class Node(var edges: Array[Edge] = Array(),
 }
 
 object Node {
-  implicit val orderByDistance: Ordering[Node] = Ordering.by[Node, Int](_.distance).reverse
+  implicit def orderByDistance[T]: Ordering[Node[T]] = Ordering.by[Node[T], Int](_.distance).reverse
 }
 
 case class SectionedGrid(grid: WeightedGrid, boundaryLocations: Array[Int], boundaries: Array[Array[MetaNode]]) extends Solver {
@@ -88,13 +88,71 @@ case class SectionedGrid(grid: WeightedGrid, boundaryLocations: Array[Int], boun
   override def clearingTime: Long = grid.clearingTime
 }
 
+object FloydWarshall {
+
+  def computeDistances(grid: WeightedGrid): Array[Array[Array[Array[Int]]]] = {
+    val distances = Array.fill(grid.rows, grid.cols, grid.rows, grid.cols)(Int.MaxValue)
+    val allCells = grid.allCells
+    allCells.foreach { cell =>
+      distances(cell.row)(cell.col)(cell.row)(cell.col) = 0
+      cell.edges.foreach { edge =>
+          distances(cell.row)(cell.col)(edge.dest.row)(edge.dest.col) = edge.weight
+        }
+      }
+
+    for {
+      k <- allCells
+      i <- allCells
+      j <- allCells
+    } {
+      if (distances(i.row)(i.col)(j.row)(j.col) > distances(i.row)(i.col)(k.row)(k.col) + distances(k.row)(k.col)(j.row)(j.col)) {
+        distances(i.row)(i.col)(j.row)(j.col) = distances(i.row)(i.col)(k.row)(k.col) + distances(k.row)(k.col)(j.row)(j.col)
+      }
+    }
+
+    distances
+
+  }
+
+}
+
+case class Section(leftBoundary: Array[MetaNode],
+                   rightBoundary:Array[MetaNode],
+                   distanceCache: Array[Array[Array[Array[Int]]]],
+                   start: Int,
+                   end: Int)
+
 object SectionedGrid {
   val SECTION_WIDTH = 100
 
   def fromWeights(weights: Array[Array[Int]]): SectionedGrid = {
     val t0 = System.nanoTime()
+    val rows = weights.length
     val cols = weights.head.length
-    val grids = (0 until cols by SECTION_WIDTH).map(i => WeightedGrid.fromWeights(weights.map(_.slice(i, i + SECTION_WIDTH))))
+    val sections = (0 until cols by SECTION_WIDTH).map { start =>
+      val grid = WeightedGrid.fromWeights(weights.map(_.slice(start, start + SECTION_WIDTH)))
+      val distanceCache = FloydWarshall.computeDistances(grid)
+      val leftBoundary = (0 until grid.rows).toArray.map { row => new MetaNode(grid.cells(row)(0))}
+      val rightBoundary = (0 until grid.rows).toArray.map { row => new MetaNode(grid.cells(row)(grid.cols - 1))}
+
+      val allNodes = leftBoundary ++ rightBoundary
+      allNodes.foreach { node =>
+        val neighbors = allNodes.filter(_ != node)
+        node.edges = neighbors.map(neighbor => Edge(distanceCache(node.cell.row)(node.cell.col)(neighbor.cell.row)(neighbor.cell.col), neighbor))
+      }
+      Section(leftBoundary, rightBoundary, distanceCache, start, start + SECTION_WIDTH - 1)
+    }
+
+    sections.sliding(2).foreach { pair =>
+      val leftSection = pair(0)
+      val rightSection = pair(1)
+      (0 until rows).foreach { row =>
+        val leftNode = leftSection.rightBoundary(row)
+        val rightNode = rightSection.leftBoundary(row)
+        leftNode.edges :+= Edge(weights(row)(rightSection.start), rightNode)
+        rightNode.edges :+= Edge(weights(row)(leftSection.end), leftNode)
+      }
+    }
 
     val grid = WeightedGrid.fromWeights(weights)
 
@@ -129,13 +187,13 @@ object SectionedGrid {
 }
 
 object Dijkstra {
-  def storeShortestPaths(source: Node, targets: Array[Node]): Unit = {
+  def storeShortestPaths[T <: Node[T]](source: Node[T], targets: Array[Node[T]]): Unit = {
     val targetSet = mutable.Set(targets:_*)
 
     source.distance = 0
     targetSet.remove(source)
 
-    val queue = mutable.PriorityQueue[Node](source)
+    val queue = mutable.PriorityQueue[Node[T]](source)
     queue.enqueue()
 
     while (queue.nonEmpty && targetSet.nonEmpty) {
@@ -178,10 +236,17 @@ class WeightedGrid(val cells: Array[Array[GridCell]]) extends Solver {
 
   private def getCell(cell: (Int, Int)): GridCell = cells(cell._1)(cell._2)
 
-  private def edges(row: Int, col: Int ): Array[Edge] = {
+  private def edges(row: Int, col: Int ): Array[Edge[GridCell]] = {
     Array[(Int, Int)]((row + 1, col), (row - 1, col), (row, col + 1), (row, col - 1)).filter {
       case (adjRow, adjCol) => adjRow >= 0 && adjCol >= 0 && adjRow < rows && adjCol < cols
     }.map { case (i, j) => Edge(cells(i)(j).weight, cells(i)(j)) }
+  }
+
+  def allCells: Array[GridCell] = {
+    for {
+      row <- cells
+      cell <- row
+    } yield cell
   }
 
   def clearState(): Unit = {

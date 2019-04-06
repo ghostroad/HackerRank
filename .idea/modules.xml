@@ -3,7 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/HackerRank.iml" filepath="$PROJECT_DIR$/.idea/modules/HackerRank.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/modules/hackerrank-build.iml" filepath="$PROJECT_DIR$/.idea/modules/hackerrank-build.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/HackerRank-build.iml" filepath="$PROJECT_DIR$/.idea/modules/HackerRank-build.iml" />
     </modules>
   </component>
 </project>
