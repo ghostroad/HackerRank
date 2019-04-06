@@ -4,16 +4,15 @@ import SectionedGrid.SECTION_WIDTH
 import scala.collection.mutable
 import scala.io.Source
 
-
 class GridCell(val row: Int,
                val col: Int,
-               val weight: Int) extends Node[GridCell]
+               val weight: Int) extends Node
 
-class MetaNode(val cell: GridCell) extends Node[MetaNode]
+class MetaNode(val cell: GridCell) extends Node
 
-case class Edge[T <: Node[T]](weight: Int, dest: T)
+case class Edge(weight: Int, dest: Node)
 
-class Node[T <: Node[T]](var edges: Array[Edge[T]] = Array[Edge[T]](),
+class Node(var edges: Array[Edge] = Array[Edge](),
            var distance: Int = Int.MaxValue,
            var visited: Boolean = false,
            var queued: Boolean = false) {
@@ -26,7 +25,7 @@ class Node[T <: Node[T]](var edges: Array[Edge[T]] = Array[Edge[T]](),
 }
 
 object Node {
-  implicit def orderByDistance[T <: Node[T]]: Ordering[Node[T]] = Ordering.by[Node[T], Int](_.distance).reverse
+  implicit def orderByDistance: Ordering[Node] = Ordering.by[Node, Int](_.distance).reverse
 }
 
 case class SectionedGrid(sections: Array[Section]) extends Solver {
@@ -35,103 +34,83 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
     clearMetaGraph()
 
     val sourceSection = sections(source._2 / SECTION_WIDTH)
-    val sourceNode = new MetaNode(sourceSection.grid.cells(source._1)(source._2 % SECTION_WIDTH))
-
-    sourceNode.edges = (sourceSection.leftBoundary ++ sourceSection.rightBoundary).map { neighbor =>
-      Edge(sourceSection.distance(sourceNode.cell, neighbor.cell), neighbor)
-    }
-
-
     val destSection = sections(dest._2 / SECTION_WIDTH)
+
+    val sourceNode = new MetaNode(sourceSection.grid.cells(source._1)(source._2 % SECTION_WIDTH))
     val destNode = new MetaNode(destSection.grid.cells(dest._1)(dest._2 % SECTION_WIDTH))
 
+    sourceSection.clearGrid()
+    val sourceNeighbors = sourceSection.leftBoundary ++ sourceSection.rightBoundary ++
+      (if (sourceSection == destSection) Array(destNode) else Array[MetaNode]())
+    Dijkstra.computeShortestPaths(sourceNode.cell, sourceNeighbors.map(_.cell))
+
+    sourceNode.edges = sourceNeighbors.map { neighbor =>
+      Edge(neighbor.cell.distance, neighbor)
+    }
+
+    if (sourceSection == destSection) {
+      sourceNode.edges :+= Edge(destNode.cell.distance, destNode)
+    }
+
+    destSection.clearGrid()
     val destinationNeighbors = destSection.leftBoundary ++ destSection.rightBoundary
+    Dijkstra.computeShortestPaths(destNode.cell, destinationNeighbors.map(_.cell))
 
     destinationNeighbors.foreach { neighbor =>
-      neighbor.edges :+= Edge(destSection.distance(neighbor.cell, destNode.cell), destNode)
+      neighbor.edges :+= Edge(neighbor.cell.distance - neighbor.cell.weight + destNode.cell.weight, destNode)
     }
 
-    if (destSection == sourceSection) {
-      sourceNode.edges :+= Edge(destSection.distance(sourceNode.cell, destNode.cell), destNode)
-    }
-
-    val result = Dijkstra.shortestPath(sourceNode, destNode)
+    Dijkstra.computeShortestPaths(sourceNode, Array(destNode))
 
     destinationNeighbors.foreach { neighbor =>
       neighbor.edges = neighbor.edges.dropRight(1)
     }
 
-    sourceNode.cell.weight + result
+    sourceNode.cell.weight + destNode.distance
   }
 
   def clearMetaGraph(): Unit = {
-    sections.foreach(_.clear())
+    sections.foreach(_.clearBoundaries())
   }
 
 }
 
-object FloydWarshall {
-
-  def computeDistances(grid: WeightedGrid): Array[Array[Array[Array[Int]]]] = {
-    val distances = Array.fill(grid.rows, grid.cols, grid.rows, grid.cols)(5000000)
-    val allCells = grid.allCells
-    allCells.foreach { cell =>
-      distances(cell.row)(cell.col)(cell.row)(cell.col) = 0
-      cell.edges.foreach { edge =>
-          distances(cell.row)(cell.col)(edge.dest.row)(edge.dest.col) = edge.weight
-        }
-      }
-
-    for {
-      k <- allCells
-      i <- allCells
-      j <- allCells
-    } {
-      if (distances(i.row)(i.col)(j.row)(j.col) > distances(i.row)(i.col)(k.row)(k.col) + distances(k.row)(k.col)(j.row)(j.col)) {
-        distances(i.row)(i.col)(j.row)(j.col) = distances(i.row)(i.col)(k.row)(k.col) + distances(k.row)(k.col)(j.row)(j.col)
-      }
-    }
-
-    distances
-
-  }
-
-}
 
 case class Section(leftBoundary: Array[MetaNode],
                    rightBoundary:Array[MetaNode],
-                   distanceCache: Array[Array[Array[Array[Int]]]],
                    grid: WeightedGrid,
                    start: Int,
                    end: Int) {
-  def clear(): Unit = {
+  def clearBoundaries(): Unit = {
     leftBoundary.foreach(_.clear())
     rightBoundary.foreach(_.clear())
   }
 
-  def distance(sourceCell: GridCell, destCell: GridCell): Int = distanceCache(sourceCell.row)(sourceCell.col)(destCell.row)(destCell.col)
+  def clearGrid(): Unit = {
+    grid.clearState()
+  }
 }
 
 object SectionedGrid {
-  val SECTION_WIDTH = 50
+  val SECTION_WIDTH = 33
 
   def fromWeights(weights: Array[Array[Int]]): SectionedGrid = {
     val t0 = System.nanoTime()
     val rows = weights.length
     val cols = weights.head.length
     val sections = (0 until cols by SECTION_WIDTH).toArray.map { start =>
-      println(start)
       val grid = WeightedGrid.fromWeights(weights.map(_.slice(start, start + SECTION_WIDTH)))
-      val distanceCache = FloydWarshall.computeDistances(grid)
-      val leftBoundary = (0 until grid.rows).toArray.map { row => new MetaNode(grid.cells(row)(0))}
-      val rightBoundary = (0 until grid.rows).toArray.map { row => new MetaNode(grid.cells(row)(grid.cols - 1))}
+      val leftBoundary = (0 until grid.rows).toArray.map { row => new MetaNode(grid.cells(row)(0)) }
+      val rightBoundary = (0 until grid.rows).toArray.map { row => new MetaNode(grid.cells(row)(grid.cols - 1)) }
 
       val allNodes = leftBoundary ++ rightBoundary
       allNodes.foreach { node =>
         val neighbors = allNodes.filter(_ != node)
-        node.edges = neighbors.map(neighbor => Edge(distanceCache(node.cell.row)(node.cell.col)(neighbor.cell.row)(neighbor.cell.col), neighbor))
+        grid.clearState()
+        Dijkstra.computeShortestPaths(node.cell, neighbors.map(_.cell))
+        node.edges = neighbors.map(neighbor => Edge(neighbor.cell.distance, neighbor))
       }
-      Section(leftBoundary, rightBoundary, distanceCache, grid, start, start + SECTION_WIDTH - 1)
+      Section(leftBoundary, rightBoundary, grid, start, start + SECTION_WIDTH - 1)
     }
 
     sections.sliding(2).foreach { pair =>
@@ -152,34 +131,38 @@ object SectionedGrid {
 }
 
 object Dijkstra {
-  def shortestPath[T <: Node[T]](source: Node[T], target: Node[T]): Int = {
-    if (source == target) return 0
+  def computeShortestPaths(source: Node, target: Array[Node]): Unit = {
+    val targetSet = mutable.Set(target:_*)
 
     source.distance = 0
+    targetSet.remove(source)
 
-    val queue = mutable.PriorityQueue[Node[T]](source)
+    val queue = mutable.PriorityQueue[Node](source)
     queue.enqueue()
 
-    while (queue.nonEmpty) {
+    while (queue.nonEmpty && targetSet.nonEmpty) {
       val curr = queue.dequeue()
+      if (!curr.visited) {
+        for (edge <- curr.edges if !edge.dest.visited) {
+          val newDistance = edge.weight + curr.distance
 
-      for (edge <- curr.edges if !edge.dest.visited) {
-        val newDistance = edge.weight + curr.distance
-        if (newDistance < edge.dest.distance) {
-          edge.dest.distance = newDistance
+          if (newDistance < edge.dest.distance) {
+            edge.dest.distance = newDistance
+            queue.enqueue(edge.dest)
+            edge.dest.queued = true
+          }
+
+          if (!edge.dest.queued) {
+            queue.enqueue(edge.dest)
+            edge.dest.queued = true
+          }
         }
 
-        if (!edge.dest.queued) {
-          queue.enqueue(edge.dest)
-          edge.dest.queued = true
-        }
+        curr.visited = true
+        targetSet.remove(curr)
       }
-
-      curr.visited = true
-      if (curr == target) return curr.distance
     }
 
-    throw new IllegalStateException("Shouldn't have gotten here!")
   }
 }
 
@@ -199,7 +182,7 @@ class WeightedGrid(val cells: Array[Array[GridCell]]) extends Solver {
 
   private def getCell(cell: (Int, Int)): GridCell = cells(cell._1)(cell._2)
 
-  private def edges(row: Int, col: Int ): Array[Edge[GridCell]] = {
+  private def edges(row: Int, col: Int ): Array[Edge] = {
     Array[(Int, Int)]((row + 1, col), (row - 1, col), (row, col + 1), (row, col - 1)).filter {
       case (adjRow, adjCol) => adjRow >= 0 && adjCol >= 0 && adjRow < rows && adjCol < cols
     }.map { case (i, j) => Edge(cells(i)(j).weight, cells(i)(j)) }
@@ -221,8 +204,9 @@ class WeightedGrid(val cells: Array[Array[GridCell]]) extends Solver {
     val destCell = getCell(dest)
 
     clearState()
+    Dijkstra.computeShortestPaths(sourceCell, Array(destCell))
 
-    sourceCell.weight + Dijkstra.shortestPath(sourceCell, destCell)
+    sourceCell.weight + destCell.distance
   }
 }
 
@@ -266,19 +250,13 @@ object ShortestPath extends App {
         SectionedGrid.fromWeights(weights)
       }
 
-    val distanceCache = FloydWarshall.computeDistances(WeightedGrid.fromWeights(weights))
-
     (1 to numQueries).foreach { i =>
-      if (i % 500 == 0) println(i)
+      if (i % 1000 == 0) println(i)
       val query = inputLines.next().split(" ").map(_.toInt)
       val expectedOutput = expectedLines.next().toInt
       val actualSolution = solver.solution((query(0), query(1)), (query(2), query(3)))
-      val fwSolution = weights(query(0))(query(1)) + distanceCache(query(0))(query(1))(query(2))(query(3))
       if (actualSolution != expectedOutput) {
         println(s"Oops: $i ${query.mkString(",")} $actualSolution $expectedOutput")
-      }
-      if (fwSolution != expectedOutput) {
-        println(s"Oops (fw): $i ${query.mkString(",")} $fwSolution $expectedOutput")
       }
     }
 
@@ -292,6 +270,6 @@ object ShortestPath extends App {
 
   check("input00.txt", "output00.txt")
   check("input01.txt", "output01.txt")
-//  check("input03.txt", "output03.txt")
-//  check("input06.txt", "output06.txt")
+  check("input03.txt", "output03.txt")
+  check("input06.txt", "output06.txt")
 }
