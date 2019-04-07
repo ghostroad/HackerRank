@@ -108,7 +108,6 @@ class MinHeap[T <: Queueable](val size: Int) {
 case class SectionedGrid(sections: Array[Section]) extends Solver {
 
   def solution(source: (Int, Int), dest: (Int, Int)): Int = {
-    clearMetaGraph()
 
     val sourceSection = sections(source._2 / SECTION_WIDTH)
     val destSection = sections(dest._2 / SECTION_WIDTH)
@@ -146,6 +145,7 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
       destSection.rightBoundary(i).edges :+= Edge(neighbor.distance - neighbor.weight + destCell.weight, destNode)
     }
 
+    clearMetaGraph()
     Dijkstra.computeShortestPaths(sourceNode, Array(destNode))
 
     (destSection.leftBoundary ++ destSection.rightBoundary).foreach { neighbor =>
@@ -161,8 +161,10 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
 
 
 case class Section(leftBoundary: Array[Node],
-                   rightBoundary:Array[Node],
+                   rightBoundary: Array[Node],
                    grid: WeightedGrid) {
+  def cellsAtColumn(col: Int): Array[Node] = grid.cellsAtColumn(col)
+
   def clearBoundaries(): Unit = {
     leftBoundary.foreach(_.clear())
     rightBoundary.foreach(_.clear())
@@ -194,51 +196,51 @@ object SectionedGrid {
       WeightedGrid.fromWeights(weights.map(_.slice(start, start + SECTION_WIDTH + 1)))
     }
 
-    val boundaries = grids.sliding(2).scanLeft(Array[Node]()) { case (previousBoundary, gridPair) =>
-      val leftGrid = gridPair(0)
-      val rightGrid = gridPair(1)
+    val boundaries = Array[Node]() +: Array.fill(grids.length - 1)(Array.fill(rows)(new Node())) :+ Array[Node]()
 
-      val boundary = Array.fill(rows)(new Node())
-
-      (0 until rows).foreach { row =>
-        leftGrid.clearState()
-        val leftCells = leftGrid.cellsAtColumn(0)
-        val siblingsInLeftGrid = leftGrid.cellsAtColumn(leftGrid.cols - 1)
-        val thisCell = leftGrid.cells(row)(leftGrid.cols - 1)
-        Dijkstra.computeShortestPaths(thisCell, leftCells ++ siblingsInLeftGrid)
-
-        rightGrid.clearState()
-        val siblingsInRightGrid = rightGrid.cellsAtColumn(0)
-        Dijkstra.computeShortestPaths(rightGrid.cells(row)(0), siblingsInRightGrid)
-
-        val siblingEdges = (0 until rows).filter(_ != row).toArray.map { otherRow =>
-          Edge(min(leftGrid.cells(otherRow)(leftGrid.cols - 1).distance, rightGrid.cells(otherRow)(0).distance), boundary(otherRow))
-        }
-
-        val leftEdges = previousBoundary.indices.toArray.map { i =>
-          Edge(leftGrid.cells(i)(0).distance, previousBoundary(i))
-        }
-
-        previousBoundary.indices.foreach { i =>
-          val cell = leftGrid.cells(i)(0)
-          previousBoundary(i).edges :+= Edge(cell.distance - cell.weight + thisCell.weight, boundary(row))
-        }
-
-        boundary(row).edges = siblingEdges ++ leftEdges
-      }
-
-      boundary
+    val sections = boundaries.sliding(2).toArray.zip(grids).map { case (boundaryPair, grid) =>
+      Section(boundaryPair(0), boundaryPair(1), grid)
     }
 
-    val boundaryPairs = (boundaries.toArray :+ Array[Node]()).sliding(2).toArray
-    val sections = grids.zip(boundaryPairs).map { case (grid, boundaryPair) =>
-        Section(boundaryPair(0), boundaryPair(1), grid)
-    }
-
+    precomputeEdges(sections)
 
     val t1 = System.nanoTime()
     println(s"Initialized meta grid in ${(t1 - t0)/1000000000.0} s.")
     SectionedGrid(sections)
+  }
+
+  private def precomputeEdges(sections: Array[Section]): Unit = {
+    val rows = sections(0).grid.rows
+
+    sections.sliding(2).foreach { sectionPair =>
+      val leftSection = sectionPair(0)
+      val rightSection = sectionPair(1)
+
+      val thisBoundary = leftSection.rightBoundary
+      val previousBoundary = leftSection.leftBoundary
+
+      (0 until rows).foreach { row =>
+        val thisCell = leftSection.rightmostCellAt(row)
+
+        leftSection.computeShortestPaths(thisCell, leftSection.boundaryCells)
+        rightSection.computeShortestPaths(rightSection.leftmostCellAt(row), rightSection.cellsAtColumn(0))
+
+        val siblingEdges = (0 until rows).filter(_ != row).toArray.map { otherRow =>
+          Edge(min(leftSection.rightmostCellAt(otherRow).distance, rightSection.leftmostCellAt(otherRow).distance), thisBoundary(otherRow))
+        }
+
+        val leftEdges = previousBoundary.indices.toArray.map { i =>
+          Edge(leftSection.leftmostCellAt(i).distance, previousBoundary(i))
+        }
+
+        thisBoundary(row).edges = siblingEdges ++ leftEdges
+
+        previousBoundary.indices.foreach { i =>
+          val cell = leftSection.leftmostCellAt(i)
+          previousBoundary(i).edges :+= Edge(cell.distance - cell.weight + thisCell.weight, thisBoundary(row))
+        }
+      }
+    }
   }
 }
 
@@ -301,13 +303,6 @@ class WeightedGrid(val cells: Array[Array[GridCell]]) extends Solver {
   }
 
   def cellsAtColumn(col: Int): Array[Node] = (0 until rows).toArray.map(cells(_)(col))
-
-  def allCells: Array[GridCell] = {
-    for {
-      row <- cells
-      cell <- row
-    } yield cell
-  }
 
   def clearState(): Unit = {
     cells.foreach(_.foreach(_.clear()))
