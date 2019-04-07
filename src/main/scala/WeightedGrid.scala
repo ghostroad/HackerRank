@@ -10,18 +10,101 @@ class GridCell(val row: Int,
 
 class MetaNode(val cell: GridCell) extends Node
 
+trait Queueable {
+  var queueIndex: Option[Int]
+  def priority: Int
+}
+
 case class Edge(weight: Int, dest: Node)
 
 class Node(var edges: Array[Edge] = Array[Edge](),
            var distance: Int = Int.MaxValue,
            var visited: Boolean = false,
-           var queued: Boolean = false) {
+           var queued: Boolean = false,
+           var queueIndex: Option[Int] = None) extends Queueable {
+
+
+  def priority: Int = distance
 
   def clear(): Unit = {
     distance = Int.MaxValue
     visited = false
     queued = false
   }
+}
+
+class MinHeap[T <: Queueable](val size: Int) {
+
+  val heap: Array[Option[T]] = Array.fill[Option[T]](size)(None)
+  var end: Int = 1
+
+  def empty: Boolean = end == 1
+
+  def enqueue(elem: T): Unit = {
+    storeElement(elem, end)
+    bubbleUp(elem)
+    end += 1
+  }
+
+  def dequeue(): T = {
+    if (empty) throw new IllegalStateException("Empty!")
+    val result = heap(1).get
+
+    val lastElement = heap(end - 1).get
+    heap(end - 1) = None
+    end -= 1
+    storeElement(lastElement, 1)
+
+    bubbleDown(lastElement)
+    result
+  }
+
+  private def bubbleDown(elem: T): Unit = {
+    while (leastChild(elem).nonEmpty && leastChild(elem).get.priority < elem.priority) {
+      swap(elem, leastChild(elem).get)
+    }
+  }
+
+  private def leastChild(elem: T): Option[T] = {
+    val index = elem.queueIndex.get
+    val maybeLeft = heap(2 * index)
+    val maybeRight = heap(2 * index + 1)
+
+    (maybeLeft, maybeRight) match {
+      case (Some(left), Some(right)) if left.priority <= right.priority => Some(left)
+      case (Some(left), Some(right)) if right.priority < left.priority => Some(right)
+      case (Some(left), None) => Some(left)
+      case _ => None
+    }
+  }
+
+  private def storeElement(elem: T, index: Int): Unit = {
+    heap(index) = Some(elem)
+    elem.queueIndex = Some(index)
+  }
+
+  private def parent(elem: T): T = {
+    heap(elem.queueIndex.get / 2).get
+  }
+
+  private def swap(a: T, b: T): Unit = {
+    val aIndex = a.queueIndex.get
+    val bIndex = b.queueIndex.get
+    storeElement(a, bIndex)
+    storeElement(b, aIndex)
+  }
+
+  private def swapWithParent(elem: T): Unit = {
+    swap(elem, parent(elem))
+  }
+
+  def bubbleUp(elem: T): Unit = {
+    while (elem.queueIndex.get > 1 && parent(elem).priority > elem.priority) {
+      swapWithParent(elem)
+    }
+  }
+
+
 }
 
 object Node {
@@ -92,7 +175,7 @@ case class Section(leftBoundary: Array[MetaNode],
 }
 
 object SectionedGrid {
-  val SECTION_WIDTH = 33
+  val SECTION_WIDTH = 100
 
   def fromWeights(weights: Array[Array[Int]]): SectionedGrid = {
     val t0 = System.nanoTime()
@@ -110,7 +193,7 @@ object SectionedGrid {
         Dijkstra.computeShortestPaths(node.cell, neighbors.map(_.cell))
         node.edges = neighbors.map(neighbor => Edge(neighbor.cell.distance, neighbor))
       }
-      Section(leftBoundary, rightBoundary, grid, start, start + SECTION_WIDTH - 1)
+      Section(leftBoundary, rightBoundary, grid, start, start + grid.cols - 1)
     }
 
     sections.sliding(2).foreach { pair =>
@@ -137,10 +220,10 @@ object Dijkstra {
     source.distance = 0
     targetSet.remove(source)
 
-    val queue = mutable.PriorityQueue[Node](source)
-    queue.enqueue()
+    val queue = new MinHeap[Node](10000)
+    queue.enqueue(source)
 
-    while (queue.nonEmpty && targetSet.nonEmpty) {
+    while (!queue.empty && targetSet.nonEmpty) {
       val curr = queue.dequeue()
       if (!curr.visited) {
         for (edge <- curr.edges if !edge.dest.visited) {
@@ -148,8 +231,8 @@ object Dijkstra {
 
           if (newDistance < edge.dest.distance) {
             edge.dest.distance = newDistance
-            queue.enqueue(edge.dest)
-            edge.dest.queued = true
+
+            if (edge.dest.queued) queue.bubbleUp(edge.dest)
           }
 
           if (!edge.dest.queued) {
