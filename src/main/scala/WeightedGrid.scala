@@ -1,7 +1,6 @@
 
 import SectionedGrid.SECTION_WIDTH
 
-import scala.collection.mutable
 import scala.io.Source
 import scala.math.min
 
@@ -118,9 +117,7 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
     val destNode = new Node()
     val destCell = destSection.cellAt(dest._1, dest._2 % SECTION_WIDTH)
 
-    val sourceNeighbors = sourceSection.boundaryCells ++
-      (if (sourceSection == destSection) Array[Node](destCell) else Array[Node]())
-    sourceSection.computeShortestPaths(sourceCell, sourceNeighbors)
+    sourceSection.computeShortestPaths(sourceCell)
 
     sourceNode.edges = sourceSection.leftBoundary.indices.toArray.map { i =>
       Edge(sourceSection.leftmostCellAt(i).distance, sourceSection.leftBoundary(i))
@@ -133,7 +130,7 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
       sourceNode.edges :+= Edge(destCell.distance, destNode)
     }
 
-    destSection.computeShortestPaths(destCell, destSection.boundaryCells)
+    destSection.computeShortestPaths(destCell)
 
     destSection.leftBoundary.indices.foreach { i =>
       val neighbor = destSection.leftmostCellAt(i)
@@ -146,7 +143,7 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
     }
 
     clearMetaGraph()
-    Dijkstra.computeShortestPaths(sourceNode, Array(destNode))
+    Dijkstra.computeShortestPaths(sourceNode, Some(destNode))
 
     (destSection.leftBoundary ++ destSection.rightBoundary).foreach { neighbor =>
       neighbor.edges = neighbor.edges.dropRight(1)
@@ -178,9 +175,9 @@ case class Section(leftBoundary: Array[Node],
 
   def boundaryCells: Array[Node] = grid.cellsAtColumn(0) ++ grid.cellsAtColumn(grid.cols - 1)
 
-  def computeShortestPaths(source: Node, destinations: Array[Node]): Unit = {
+  def computeShortestPaths(source: Node): Unit = {
     grid.clearState()
-    Dijkstra.computeShortestPaths(source, destinations)
+    Dijkstra.computeShortestPaths(source)
   }
 }
 
@@ -222,8 +219,8 @@ object SectionedGrid {
       (0 until rows).foreach { row =>
         val thisCell = leftSection.rightmostCellAt(row)
 
-        leftSection.computeShortestPaths(thisCell, leftSection.boundaryCells)
-        rightSection.computeShortestPaths(rightSection.leftmostCellAt(row), rightSection.cellsAtColumn(0))
+        leftSection.computeShortestPaths(thisCell)
+        rightSection.computeShortestPaths(rightSection.leftmostCellAt(row))
 
         val siblingEdges = (0 until rows).filter(_ != row).toArray.map { otherRow =>
           Edge(min(leftSection.rightmostCellAt(otherRow).distance, rightSection.leftmostCellAt(otherRow).distance), thisBoundary(otherRow))
@@ -247,15 +244,13 @@ object SectionedGrid {
 object Dijkstra {
   val queue = new MinHeap[Node](5000)
 
-  def computeShortestPaths(source: Node, target: Array[Node]): Unit = {
-    val targetSet = mutable.Set(target:_*)
+  def computeShortestPaths(source: Node, dest: Option[Node] = None): Unit = {
+    queue.clear()
 
     source.distance = 0
-    targetSet.remove(source)
-
     queue.enqueue(source)
 
-    while (!queue.empty && targetSet.nonEmpty) {
+    while (!queue.empty) {
       val curr = queue.dequeue()
       if (!curr.visited) {
         for (edge <- curr.edges if !edge.dest.visited) {
@@ -273,10 +268,9 @@ object Dijkstra {
         }
 
         curr.visited = true
-        targetSet.remove(curr)
+        if (dest.isDefined && dest.get == curr) return
       }
     }
-    queue.clear()
   }
 }
 
@@ -313,7 +307,7 @@ class WeightedGrid(val cells: Array[Array[GridCell]]) extends Solver {
     val destCell = getCell(dest)
 
     clearState()
-    Dijkstra.computeShortestPaths(sourceCell, Array(destCell))
+    Dijkstra.computeShortestPaths(sourceCell, Some(destCell))
 
     sourceCell.weight + destCell.distance
   }
