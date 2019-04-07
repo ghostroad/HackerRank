@@ -46,6 +46,13 @@ class MinHeap[T <: Queueable](val size: Int) {
     end += 1
   }
 
+  def clear(): Unit = {
+    for (i <- 1 until end) {
+      heap(i) = None
+    }
+    end = 1
+  }
+
   def dequeue(): T = {
     if (empty) throw new IllegalStateException("Empty!")
     val result = heap(1).get
@@ -175,7 +182,7 @@ case class Section(leftBoundary: Array[MetaNode],
 }
 
 object SectionedGrid {
-  val SECTION_WIDTH = 100
+  val SECTION_WIDTH = 50
 
   def fromWeights(weights: Array[Array[Int]]): SectionedGrid = {
     val t0 = System.nanoTime()
@@ -214,13 +221,15 @@ object SectionedGrid {
 }
 
 object Dijkstra {
+  val queue = new MinHeap[Node](5000)
+
   def computeShortestPaths(source: Node, target: Array[Node]): Unit = {
     val targetSet = mutable.Set(target:_*)
 
     source.distance = 0
     targetSet.remove(source)
 
-    val queue = new MinHeap[Node](10000)
+    queue.clear()
     queue.enqueue(source)
 
     while (!queue.empty && targetSet.nonEmpty) {
