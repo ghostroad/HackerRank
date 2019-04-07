@@ -59,6 +59,17 @@ class MinHeap[T <: Queueable](val size: Int) {
     result
   }
 
+  def bubbleUp(elem: T): Unit = {
+    while (elem.queueIndex.get > 1 && parent(elem).priority > elem.priority) {
+      swapWithParent(elem)
+    }
+  }
+
+  def clear(): Unit = {
+    for (i <- 1 until end) heap(i) = None
+    end = 1
+  }
+
   private def bubbleDown(elem: T): Unit = {
     while (leastChild(elem).nonEmpty && leastChild(elem).get.priority < elem.priority) {
       swap(elem, leastChild(elem).get)
@@ -83,9 +94,7 @@ class MinHeap[T <: Queueable](val size: Int) {
     elem.queueIndex = Some(index)
   }
 
-  private def parent(elem: T): T = {
-    heap(elem.queueIndex.get / 2).get
-  }
+  private def parent(elem: T): T = heap(elem.queueIndex.get / 2).get
 
   private def swap(a: T, b: T): Unit = {
     val aIndex = a.queueIndex.get
@@ -94,21 +103,8 @@ class MinHeap[T <: Queueable](val size: Int) {
     storeElement(b, aIndex)
   }
 
-  private def swapWithParent(elem: T): Unit = {
-    swap(elem, parent(elem))
-  }
+  private def swapWithParent(elem: T): Unit = swap(elem, parent(elem))
 
-  def bubbleUp(elem: T): Unit = {
-    while (elem.queueIndex.get > 1 && parent(elem).priority > elem.priority) {
-      swapWithParent(elem)
-    }
-  }
-
-
-}
-
-object Node {
-  implicit def orderByDistance: Ordering[Node] = Ordering.by[Node, Int](_.distance).reverse
 }
 
 case class SectionedGrid(sections: Array[Section]) extends Solver {
@@ -152,9 +148,7 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
     sourceNode.cell.weight + destNode.distance
   }
 
-  def clearMetaGraph(): Unit = {
-    sections.foreach(_.clearBoundaries())
-  }
+  def clearMetaGraph(): Unit = sections.foreach(_.clearBoundaries())
 
 }
 
@@ -169,13 +163,11 @@ case class Section(leftBoundary: Array[MetaNode],
     rightBoundary.foreach(_.clear())
   }
 
-  def clearGrid(): Unit = {
-    grid.clearState()
-  }
+  def clearGrid(): Unit = grid.clearState()
 }
 
 object SectionedGrid {
-  val SECTION_WIDTH = 100
+  val SECTION_WIDTH = 50
 
   def fromWeights(weights: Array[Array[Int]]): SectionedGrid = {
     val t0 = System.nanoTime()
@@ -214,13 +206,14 @@ object SectionedGrid {
 }
 
 object Dijkstra {
+  val queue = new MinHeap[Node](5000)
+
   def computeShortestPaths(source: Node, target: Array[Node]): Unit = {
     val targetSet = mutable.Set(target:_*)
 
     source.distance = 0
     targetSet.remove(source)
 
-    val queue = new MinHeap[Node](10000)
     queue.enqueue(source)
 
     while (!queue.empty && targetSet.nonEmpty) {
@@ -231,7 +224,6 @@ object Dijkstra {
 
           if (newDistance < edge.dest.distance) {
             edge.dest.distance = newDistance
-
             if (edge.dest.queued) queue.bubbleUp(edge.dest)
           }
 
@@ -245,7 +237,7 @@ object Dijkstra {
         targetSet.remove(curr)
       }
     }
-
+    queue.clear()
   }
 }
 
