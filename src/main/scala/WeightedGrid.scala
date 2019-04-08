@@ -83,7 +83,7 @@ class MinHeap[T <: Queueable](val size: Int) {
     val leftChild = heap(leftChildIndex)
     val rightChild = heap(rightChildIndex)
 
-    if (leftChild.get.priority <= rightChild.get.priority) return leftChild else return rightChild
+    if (leftChild.get.priority <= rightChild.get.priority) leftChild else rightChild
   }
 
   private def storeElement(elem: T, index: Int): Unit = {
