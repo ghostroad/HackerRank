@@ -63,7 +63,6 @@ class MinHeap[T <: Queueable](val size: Int) {
   }
 
   def clear(): Unit = {
-    for (i <- 1 until end) heap(i) = None
     end = 1
   }
 
@@ -75,15 +74,16 @@ class MinHeap[T <: Queueable](val size: Int) {
 
   private def leastChild(elem: T): Option[T] = {
     val index = elem.queueIndex.get
-    val maybeLeft = heap(2 * index)
-    val maybeRight = heap(2 * index + 1)
+    val leftChildIndex = 2 * index
+    val rightChildIndex = 2 * index + 1
 
-    (maybeLeft, maybeRight) match {
-      case (Some(left), Some(right)) if left.priority <= right.priority => Some(left)
-      case (Some(left), Some(right)) if right.priority < left.priority => Some(right)
-      case (Some(left), None) => Some(left)
-      case _ => None
-    }
+    if (leftChildIndex >= end) return None
+    if (leftChildIndex == end - 1) return heap(leftChildIndex)
+
+    val leftChild = heap(leftChildIndex)
+    val rightChild = heap(rightChildIndex)
+
+    if (leftChild.get.priority <= rightChild.get.priority) return leftChild else return rightChild
   }
 
   private def storeElement(elem: T, index: Int): Unit = {
@@ -354,7 +354,7 @@ object ShortestPath extends App {
       }
 
     (1 to numQueries).foreach { i =>
-      if (i % 1000 == 0) println(i)
+      if (i % 5000 == 0) println(i)
       val query = inputLines.next().split(" ").map(_.toInt)
       val expectedOutput = expectedLines.next().toInt
       val actualSolution = solver.solution((query(0), query(1)), (query(2), query(3)))
