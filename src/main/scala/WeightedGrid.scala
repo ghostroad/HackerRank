@@ -4,6 +4,10 @@ import SectionedGrid.SECTION_WIDTH
 import scala.io.Source
 import scala.math.min
 
+object RunCounter {
+  var count: Int = 0
+}
+
 class GridCell(val row: Int,
                val col: Int,
                val weight: Int) extends Node
@@ -19,15 +23,12 @@ class Node(var edges: Array[Edge] = Array[Edge](),
            var distance: Int = Int.MaxValue,
            var visited: Boolean = false,
            var queued: Boolean = false,
-           var queueIndex: Option[Int] = None) extends Queueable {
+           var queueIndex: Option[Int] = None,
+           ) extends Queueable {
+
+  var runNumber: Int = 0
 
   def priority: Int = distance
-
-  def clear(): Unit = {
-    distance = Int.MaxValue
-    visited = false
-    queued = false
-  }
 }
 
 class MinHeap[T <: Queueable](val size: Int) {
@@ -142,7 +143,6 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
       destSection.rightBoundary(i).edges :+= Edge(neighbor.distance - neighbor.weight + destCell.weight, destNode)
     }
 
-    clearMetaGraph()
     Dijkstra.computeShortestPaths(sourceNode, Some(destNode))
 
     (destSection.leftBoundary ++ destSection.rightBoundary).foreach { neighbor =>
@@ -152,8 +152,6 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
     sourceCell.weight + destNode.distance
   }
 
-  def clearMetaGraph(): Unit = sections.foreach(_.clearBoundaries())
-
 }
 
 
@@ -161,11 +159,6 @@ case class Section(leftBoundary: Array[Node],
                    rightBoundary: Array[Node],
                    grid: WeightedGrid) {
   def cellsAtColumn(col: Int): Array[Node] = grid.cellsAtColumn(col)
-
-  def clearBoundaries(): Unit = {
-    leftBoundary.foreach(_.clear())
-    rightBoundary.foreach(_.clear())
-  }
 
   def cellAt(row: Int, col: Int): GridCell = grid.cells(row)(col)
 
@@ -176,7 +169,6 @@ case class Section(leftBoundary: Array[Node],
   def boundaryCells: Array[Node] = grid.cellsAtColumn(0) ++ grid.cellsAtColumn(grid.cols - 1)
 
   def computeShortestPaths(source: Node): Unit = {
-    grid.clearState()
     Dijkstra.computeShortestPaths(source)
   }
 }
@@ -244,8 +236,18 @@ object SectionedGrid {
 object Dijkstra {
   val queue = new MinHeap[Node](5000)
 
+  def resetNode(currentRunNumber: Int, node: Node): Unit = {
+    node.runNumber = currentRunNumber
+    node.visited = false
+    node.queued = false
+    node.distance = Int.MaxValue
+  }
+
   def computeShortestPaths(source: Node, dest: Option[Node] = None): Unit = {
     queue.clear()
+    val currentRunNumber = RunCounter.count
+    RunCounter.count += 1
+    resetNode(currentRunNumber, source)
 
     source.distance = 0
     queue.enqueue(source)
@@ -253,17 +255,20 @@ object Dijkstra {
     while (!queue.empty) {
       val curr = queue.dequeue()
       if (!curr.visited) {
-        for (edge <- curr.edges if !edge.dest.visited) {
-          val newDistance = edge.weight + curr.distance
+        for (edge <- curr.edges) {
+          if (edge.dest.runNumber != currentRunNumber) resetNode(currentRunNumber, edge.dest)
+          if (!edge.dest.visited) {
+            val newDistance = edge.weight + curr.distance
 
-          if (newDistance < edge.dest.distance) {
-            edge.dest.distance = newDistance
-            if (edge.dest.queued) queue.bubbleUp(edge.dest)
-          }
+            if (newDistance < edge.dest.distance) {
+              edge.dest.distance = newDistance
+              if (edge.dest.queued) queue.bubbleUp(edge.dest)
+            }
 
-          if (!edge.dest.queued) {
-            queue.enqueue(edge.dest)
-            edge.dest.queued = true
+            if (!edge.dest.queued) {
+              queue.enqueue(edge.dest)
+              edge.dest.queued = true
+            }
           }
         }
 
@@ -298,15 +303,11 @@ class WeightedGrid(val cells: Array[Array[GridCell]]) extends Solver {
 
   def cellsAtColumn(col: Int): Array[Node] = (0 until rows).toArray.map(cells(_)(col))
 
-  def clearState(): Unit = {
-    cells.foreach(_.foreach(_.clear()))
-  }
-
   def solution(source: (Int, Int), dest: (Int, Int)): Int = {
     val sourceCell = getCell(source)
     val destCell = getCell(dest)
 
-    clearState()
+//    clearState()
     Dijkstra.computeShortestPaths(sourceCell, Some(destCell))
 
     sourceCell.weight + destCell.distance
