@@ -10,28 +10,32 @@ object RunCounter {
 
 class GridCell(val row: Int,
                val col: Int,
-               val weight: Int) extends Node
+               val weight: Int,
+               val leftBoundaryDistances: Array[Int],
+               val rightBoundaryDistances: Array[Int]) extends Node[GridCell]
 
-trait Queueable {
-  var queueIndex: Option[Int]
-  def priority: Int
+object GridCell {
+  implicit val cellQueue: MinHeap[GridCell] = new MinHeap[GridCell](1000)
 }
 
-case class Edge(weight: Int, dest: Node)
+case class Edge[T](weight: Int, dest: T)
 
-class Node(var edges: Array[Edge] = Array[Edge](),
-           var distance: Int = Int.MaxValue,
-           var visited: Boolean = false,
-           var queued: Boolean = false,
-           var queueIndex: Option[Int] = None,
-           ) extends Queueable {
+class MetaNode extends Node[MetaNode]
 
-  var runNumber: Int = 0
-
-  def priority: Int = distance
+object MetaNode {
+  implicit val metaNodeQueue: MinHeap[MetaNode] = new MinHeap[MetaNode](1000)
 }
 
-class MinHeap[T <: Queueable](val size: Int) {
+class Node[T](var edges: Array[Edge[T]] = Array[Edge[T]](),
+              var distance: Int = Int.MaxValue,
+              var visited: Boolean = false,
+              var queued: Boolean = false,
+              var queueIndex: Option[Int] = None,
+              var previous: Option[T] = None,
+              var runNumber: Int = 0
+             )
+
+class MinHeap[T <: Node[T]](val size: Int) {
 
   val heap: Array[Option[T]] = Array.fill[Option[T]](size)(None)
   var end: Int = 1
@@ -58,7 +62,7 @@ class MinHeap[T <: Queueable](val size: Int) {
   }
 
   def bubbleUp(elem: T): Unit = {
-    while (elem.queueIndex.get > 1 && parent(elem).priority > elem.priority) {
+    while (elem.queueIndex.get > 1 && parent(elem).distance > elem.distance) {
       swapWithParent(elem)
     }
   }
@@ -68,7 +72,7 @@ class MinHeap[T <: Queueable](val size: Int) {
   }
 
   private def bubbleDown(elem: T): Unit = {
-    while (leastChild(elem).nonEmpty && leastChild(elem).get.priority < elem.priority) {
+    while (leastChild(elem).nonEmpty && leastChild(elem).get.distance <= elem.distance) {
       swap(elem, leastChild(elem).get)
     }
   }
@@ -84,7 +88,7 @@ class MinHeap[T <: Queueable](val size: Int) {
     val leftChild = heap(leftChildIndex)
     val rightChild = heap(rightChildIndex)
 
-    if (leftChild.get.priority <= rightChild.get.priority) leftChild else rightChild
+    if (leftChild.get.distance <= rightChild.get.distance) leftChild else rightChild
   }
 
   private def storeElement(elem: T, index: Int): Unit = {
@@ -112,35 +116,36 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
     val sourceSection = sections(source._2 / SECTION_WIDTH)
     val destSection = sections(dest._2 / SECTION_WIDTH)
 
-    val sourceNode = new Node()
+    val sourceNode = new MetaNode()
     val sourceCell = sourceSection.cellAt(source._1, source._2 % SECTION_WIDTH)
 
-    val destNode = new Node()
+    val destNode = new MetaNode()
     val destCell = destSection.cellAt(dest._1, dest._2 % SECTION_WIDTH)
 
-    sourceSection.computeShortestPaths(sourceCell)
-
     sourceNode.edges = sourceSection.leftBoundary.indices.toArray.map { i =>
-      Edge(sourceSection.leftmostCellAt(i).distance, sourceSection.leftBoundary(i))
+      if (sourceCell.leftBoundaryDistances(i) < 0) sourceSection.computeShortestPaths(sourceCell)
+      Edge[MetaNode](sourceCell.leftBoundaryDistances(i), sourceSection.leftBoundary(i))
     } ++
-    sourceSection.rightBoundary.indices.toArray.map { i =>
-      Edge(sourceSection.rightmostCellAt(i).distance, sourceSection.rightBoundary(i))
-    }
+      sourceSection.rightBoundary.indices.toArray.map { i =>
+        if (sourceCell.rightBoundaryDistances(i) < 0) sourceSection.computeShortestPaths(sourceCell)
+        Edge[MetaNode](sourceCell.rightBoundaryDistances(i), sourceSection.rightBoundary(i))
+      }
 
     if (sourceSection == destSection) {
+      Dijkstra.computeShortestPaths(sourceCell, Some(destCell))
       sourceNode.edges :+= Edge(destCell.distance, destNode)
     }
 
-    destSection.computeShortestPaths(destCell)
-
     destSection.leftBoundary.indices.foreach { i =>
+      if (destCell.leftBoundaryDistances(i) < 0) destSection.computeShortestPaths(destCell)
       val neighbor = destSection.leftmostCellAt(i)
-      destSection.leftBoundary(i).edges :+= Edge(neighbor.distance - neighbor.weight + destCell.weight, destNode)
+      destSection.leftBoundary(i).edges :+= Edge(destCell.leftBoundaryDistances(i) - neighbor.weight + destCell.weight, destNode)
     }
 
     destSection.rightBoundary.indices.foreach { i =>
+      if (destCell.rightBoundaryDistances(i) < 0) destSection.computeShortestPaths(destCell)
       val neighbor = destSection.rightmostCellAt(i)
-      destSection.rightBoundary(i).edges :+= Edge(neighbor.distance - neighbor.weight + destCell.weight, destNode)
+      destSection.rightBoundary(i).edges :+= Edge(destCell.rightBoundaryDistances(i) - neighbor.weight + destCell.weight, destNode)
     }
 
     Dijkstra.computeShortestPaths(sourceNode, Some(destNode))
@@ -155,10 +160,10 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
 }
 
 
-case class Section(leftBoundary: Array[Node],
-                   rightBoundary: Array[Node],
+case class Section(leftBoundary: Array[MetaNode],
+                   rightBoundary: Array[MetaNode],
                    grid: WeightedGrid) {
-  def cellsAtColumn(col: Int): Array[Node] = grid.cellsAtColumn(col)
+  def cellsAtColumn(col: Int): Array[GridCell] = grid.cellsAtColumn(col)
 
   def cellAt(row: Int, col: Int): GridCell = grid.cells(row)(col)
 
@@ -166,10 +171,31 @@ case class Section(leftBoundary: Array[Node],
 
   def leftmostCellAt(row: Int): GridCell = grid.cells(row)(0)
 
-  def boundaryCells: Array[Node] = grid.cellsAtColumn(0) ++ grid.cellsAtColumn(grid.cols - 1)
+  def boundaryCells: Array[GridCell] = grid.cellsAtColumn(0) ++ grid.cellsAtColumn(grid.cols - 1)
 
-  def computeShortestPaths(source: Node): Unit = {
+  def computeShortestPaths(source: GridCell): Unit = {
     Dijkstra.computeShortestPaths(source)
+
+    grid.cellsAtColumn(0).foreach { leftCell =>
+      val distance = leftCell.distance
+      var currentCell: Option[GridCell] = Some(leftCell)
+      while (currentCell.isDefined) {
+        val cell = currentCell.get
+        cell.leftBoundaryDistances(leftCell.row) = distance - cell.distance
+        currentCell = cell.previous
+      }
+    }
+
+    grid.cellsAtColumn(grid.cols - 1).foreach { rightCell =>
+      val distance = rightCell.distance
+      var currentCell: Option[GridCell] = Some(rightCell)
+      while (currentCell.isDefined) {
+        val cell = currentCell.get
+        cell.rightBoundaryDistances(rightCell.row) = distance - cell.distance
+        currentCell = cell.previous
+      }
+    }
+
   }
 }
 
@@ -185,7 +211,7 @@ object SectionedGrid {
       WeightedGrid.fromWeights(weights.map(_.slice(start, start + SECTION_WIDTH + 1)))
     }
 
-    val boundaries = Array[Node]() +: Array.fill(grids.length - 1)(Array.fill(rows)(new Node())) :+ Array[Node]()
+    val boundaries = Array[MetaNode]() +: Array.fill(grids.length - 1)(Array.fill(rows)(new MetaNode())) :+ Array[MetaNode]()
 
     val sections = boundaries.sliding(2).toArray.zip(grids).map { case (boundaryPair, grid) =>
       Section(boundaryPair(0), boundaryPair(1), grid)
@@ -194,7 +220,7 @@ object SectionedGrid {
     precomputeEdges(sections)
 
     val t1 = System.nanoTime()
-    println(s"Initialized meta grid in ${(t1 - t0)/1000000000.0} s.")
+    println(s"Initialized meta grid in ${(t1 - t0) / 1000000000.0} s.")
     SectionedGrid(sections)
   }
 
@@ -234,16 +260,16 @@ object SectionedGrid {
 }
 
 object Dijkstra {
-  val queue = new MinHeap[Node](5000)
 
-  def resetNode(currentRunNumber: Int, node: Node): Unit = {
+  def resetNode[T <: Node[T]](currentRunNumber: Int, node: T): Unit = {
     node.runNumber = currentRunNumber
     node.visited = false
     node.queued = false
     node.distance = Int.MaxValue
+    node.previous = None
   }
 
-  def computeShortestPaths(source: Node, dest: Option[Node] = None): Unit = {
+  def computeShortestPaths[T <: Node[T]](source: T, dest: Option[T] = None)(implicit queue: MinHeap[T]): Unit = {
     queue.clear()
     val currentRunNumber = RunCounter.count
     RunCounter.count += 1
@@ -262,6 +288,7 @@ object Dijkstra {
 
             if (newDistance < edge.dest.distance) {
               edge.dest.distance = newDistance
+              edge.dest.previous = Some(curr)
               if (edge.dest.queued) queue.bubbleUp(edge.dest)
             }
 
@@ -295,19 +322,18 @@ class WeightedGrid(val cells: Array[Array[GridCell]]) extends Solver {
 
   private def getCell(cell: (Int, Int)): GridCell = cells(cell._1)(cell._2)
 
-  private def edges(row: Int, col: Int ): Array[Edge] = {
+  private def edges(row: Int, col: Int): Array[Edge[GridCell]] = {
     Array[(Int, Int)]((row + 1, col), (row - 1, col), (row, col + 1), (row, col - 1)).filter {
       case (adjRow, adjCol) => adjRow >= 0 && adjCol >= 0 && adjRow < rows && adjCol < cols
     }.map { case (i, j) => Edge(cells(i)(j).weight, cells(i)(j)) }
   }
 
-  def cellsAtColumn(col: Int): Array[Node] = (0 until rows).toArray.map(cells(_)(col))
+  def cellsAtColumn(col: Int): Array[GridCell] = (0 until rows).toArray.map(cells(_)(col))
 
   def solution(source: (Int, Int), dest: (Int, Int)): Int = {
     val sourceCell = getCell(source)
     val destCell = getCell(dest)
 
-//    clearState()
     Dijkstra.computeShortestPaths(sourceCell, Some(destCell))
 
     sourceCell.weight + destCell.distance
@@ -320,7 +346,7 @@ object WeightedGrid {
     val cols = weights.head.length
     val cellGrid: Array[Array[GridCell]] = (0 until rows).toArray.map { i =>
       (0 until cols).toArray.map { j =>
-        new GridCell(row = i, col = j, weight = weights(i)(j))
+        new GridCell(row = i, col = j, weight = weights(i)(j), Array.fill(rows)(-1), Array.fill(rows)(-1))
       }
     }
     new WeightedGrid(cellGrid)
@@ -369,7 +395,7 @@ object ShortestPath extends App {
 
     val t1 = System.nanoTime()
 
-    println(s"${(t1 - t0)/1000000000.0} s elapsed.")
+    println(s"${(t1 - t0) / 1000000000.0} s elapsed.")
   }
 
   check("input00.txt", "output00.txt")
