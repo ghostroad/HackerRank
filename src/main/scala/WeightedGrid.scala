@@ -30,7 +30,7 @@ class Node[T](var edges: Array[Edge[T]] = Array[Edge[T]](),
               var distance: Int = Int.MaxValue,
               var visited: Boolean = false,
               var queued: Boolean = false,
-              var queueIndex: Option[Int] = None,
+              var queueIndex: Int = -1,
               var previous: Option[T] = None,
               var runNumber: Int = 0
              )
@@ -49,7 +49,6 @@ class MinHeap[T <: Node[T]](val size: Int) {
   }
 
   def dequeue(): T = {
-    if (empty) throw new IllegalStateException("Empty!")
     val result = heap(1).get
 
     val lastElement = heap(end - 1).get
@@ -62,7 +61,7 @@ class MinHeap[T <: Node[T]](val size: Int) {
   }
 
   def bubbleUp(elem: T): Unit = {
-    while (elem.queueIndex.get > 1 && parent(elem).distance > elem.distance) {
+    while (elem.queueIndex > 1 && parent(elem).distance >= elem.distance) {
       swapWithParent(elem)
     }
   }
@@ -72,13 +71,13 @@ class MinHeap[T <: Node[T]](val size: Int) {
   }
 
   private def bubbleDown(elem: T): Unit = {
-    while (leastChild(elem).nonEmpty && leastChild(elem).get.distance <= elem.distance) {
+    while (leastChild(elem).nonEmpty && leastChild(elem).get.distance < elem.distance) {
       swap(elem, leastChild(elem).get)
     }
   }
 
   private def leastChild(elem: T): Option[T] = {
-    val index = elem.queueIndex.get
+    val index = elem.queueIndex
     val leftChildIndex = 2 * index
     val rightChildIndex = 2 * index + 1
 
@@ -93,14 +92,14 @@ class MinHeap[T <: Node[T]](val size: Int) {
 
   private def storeElement(elem: T, index: Int): Unit = {
     heap(index) = Some(elem)
-    elem.queueIndex = Some(index)
+    elem.queueIndex = index
   }
 
-  private def parent(elem: T): T = heap(elem.queueIndex.get / 2).get
+  private def parent(elem: T): T = heap(elem.queueIndex / 2).get
 
   private def swap(a: T, b: T): Unit = {
-    val aIndex = a.queueIndex.get
-    val bIndex = b.queueIndex.get
+    val aIndex = a.queueIndex
+    val bIndex = b.queueIndex
     storeElement(a, bIndex)
     storeElement(b, aIndex)
   }
@@ -200,7 +199,7 @@ case class Section(leftBoundary: Array[MetaNode],
 }
 
 object SectionedGrid {
-  val SECTION_WIDTH = 50
+  val SECTION_WIDTH = 75
 
   def fromWeights(weights: Array[Array[Int]]): SectionedGrid = {
     val t0 = System.nanoTime()
