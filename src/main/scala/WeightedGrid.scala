@@ -35,6 +35,80 @@ class Node[T](var edges: Array[Edge[T]] = Array[Edge[T]](),
               var runNumber: Int = 0
              )
 
+class MinHeapGridCell(val heap: Array[GridCell]) {
+  var end: Int = heap.length
+
+  def empty: Boolean = end == 0
+
+  def dequeue(): GridCell = {
+    val result = heap(0)
+    val lastElement = heap(end - 1)
+    end -= 1
+    swap(lastElement, result)
+    bubbleDown(lastElement)
+    result
+  }
+
+  def bubbleUp(elem: GridCell): Unit = {
+    while (elem.queueIndex > 0 && parent(elem).distance >= elem.distance) {
+      swapWithParent(elem)
+    }
+  }
+
+  def reset(): Unit = {
+    end = heap.length
+    heap.foreach { cell =>
+      cell.visited = false
+      cell.distance = Int.MaxValue
+      cell.previous = None
+    }
+  }
+
+  def moveToFront(elem: GridCell): Unit = {
+    swap(elem, heap(0))
+  }
+
+  private def bubbleDown(elem: GridCell): Unit = {
+    while (true) {
+      val index = elem.queueIndex
+      val leftChildIndex = (2 * (index + 1)) - 1
+      val rightChildIndex = 2 * (index + 1)
+
+      if (leftChildIndex >= end) return
+
+      if (leftChildIndex == end - 1) {
+        swap(elem, heap(leftChildIndex))
+        return
+      }
+
+      val leftChild = heap(leftChildIndex)
+      val rightChild = heap(rightChildIndex)
+
+      val leastChild = if (leftChild.distance <= rightChild.distance) leftChild else rightChild
+
+      if (leastChild.distance > elem.distance) return
+
+      swap(elem, leastChild)
+    }
+  }
+
+  private def storeElement(elem: GridCell, index: Int): Unit = {
+    heap(index) = elem
+    elem.queueIndex = index
+  }
+
+  private def parent(elem: GridCell): GridCell = heap(((elem.queueIndex + 1) / 2) - 1)
+
+  private def swap(a: GridCell, b: GridCell): Unit = {
+    val aIndex = a.queueIndex
+    val bIndex = b.queueIndex
+    storeElement(a, bIndex)
+    storeElement(b, aIndex)
+  }
+
+  private def swapWithParent(elem: GridCell): Unit = swap(elem, parent(elem))
+}
+
 class MinHeap[T <: Node[T]](val size: Int) {
 
   val heap: Array[Option[T]] = Array.fill[Option[T]](size)(None)
@@ -121,28 +195,35 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
     val destNode = new MetaNode()
     val destCell = destSection.cellAt(dest._1, dest._2 % SECTION_WIDTH)
 
+    var sourceCellDistancesComputed = false
+
+    if ((sourceCell.leftBoundaryDistances ++ sourceCell.rightBoundaryDistances).exists( _ < 0)) {
+      sourceSection.computeShortestPaths(sourceCell)
+      sourceCellDistancesComputed = true
+    }
+
     sourceNode.edges = sourceSection.leftBoundary.indices.toArray.map { i =>
-      if (sourceCell.leftBoundaryDistances(i) < 0) sourceSection.computeShortestPaths(sourceCell)
       Edge[MetaNode](sourceCell.leftBoundaryDistances(i), sourceSection.leftBoundary(i))
     } ++
       sourceSection.rightBoundary.indices.toArray.map { i =>
-        if (sourceCell.rightBoundaryDistances(i) < 0) sourceSection.computeShortestPaths(sourceCell)
         Edge[MetaNode](sourceCell.rightBoundaryDistances(i), sourceSection.rightBoundary(i))
       }
 
     if (sourceSection == destSection) {
-      Dijkstra.computeShortestPaths(sourceCell, Some(destCell))
+      if (!sourceCellDistancesComputed) sourceSection.computeShortestPaths(sourceCell)
       sourceNode.edges :+= Edge(destCell.distance, destNode)
     }
 
+    if ((destCell.leftBoundaryDistances ++ destCell.rightBoundaryDistances).exists( _ < 0)) {
+      destSection.computeShortestPaths(destCell)
+    }
+
     destSection.leftBoundary.indices.foreach { i =>
-      if (destCell.leftBoundaryDistances(i) < 0) destSection.computeShortestPaths(destCell)
       val neighbor = destSection.leftmostCellAt(i)
       destSection.leftBoundary(i).edges :+= Edge(destCell.leftBoundaryDistances(i) - neighbor.weight + destCell.weight, destNode)
     }
 
     destSection.rightBoundary.indices.foreach { i =>
-      if (destCell.rightBoundaryDistances(i) < 0) destSection.computeShortestPaths(destCell)
       val neighbor = destSection.rightmostCellAt(i)
       destSection.rightBoundary(i).edges :+= Edge(destCell.rightBoundaryDistances(i) - neighbor.weight + destCell.weight, destNode)
     }
@@ -158,10 +239,12 @@ case class SectionedGrid(sections: Array[Section]) extends Solver {
 
 }
 
-
 case class Section(leftBoundary: Array[MetaNode],
                    rightBoundary: Array[MetaNode],
                    grid: WeightedGrid) {
+  val queue = new MinHeapGridCell(grid.cells.flatten)
+  queue.heap.indices.foreach(i => queue.heap(i).queueIndex = i)
+
   def cellsAtColumn(col: Int): Array[GridCell] = grid.cellsAtColumn(col)
 
   def cellAt(row: Int, col: Int): GridCell = grid.cells(row)(col)
@@ -173,7 +256,28 @@ case class Section(leftBoundary: Array[MetaNode],
   def boundaryCells: Array[GridCell] = grid.cellsAtColumn(0) ++ grid.cellsAtColumn(grid.cols - 1)
 
   def computeShortestPaths(source: GridCell): Unit = {
-    Dijkstra.computeShortestPaths(source)
+    queue.reset()
+
+    source.distance = 0
+    queue.moveToFront(source)
+
+    while (!queue.empty) {
+      val curr = queue.dequeue()
+      if (!curr.visited) {
+        for (edge <- curr.edges) {
+          if (!edge.dest.visited) {
+            val newDistance = edge.weight + curr.distance
+
+            if (newDistance < edge.dest.distance) {
+              edge.dest.distance = newDistance
+              edge.dest.previous = Some(curr)
+              queue.bubbleUp(edge.dest)
+            }
+          }
+        }
+        curr.visited = true
+      }
+    }
 
     grid.cellsAtColumn(0).foreach { leftCell =>
       val distance = leftCell.distance
@@ -345,7 +449,7 @@ object WeightedGrid {
     val cols = weights.head.length
     val cellGrid: Array[Array[GridCell]] = (0 until rows).toArray.map { i =>
       (0 until cols).toArray.map { j =>
-        new GridCell(row = i, col = j, weight = weights(i)(j), Array.fill(rows)(-1), Array.fill(rows)(-1))
+        new GridCell(row=i, col=j, weight=weights(i)(j), leftBoundaryDistances=Array.fill(rows)(-1), rightBoundaryDistances=Array.fill(rows)(-1))
       }
     }
     new WeightedGrid(cellGrid)
